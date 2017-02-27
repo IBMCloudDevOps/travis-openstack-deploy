@@ -1,0 +1,26 @@
+# Create a compute instance on OpenStack using Ansbile
+---
+- name: launch a compute instance test
+  hosts: localhost
+  vars: 
+    os_auth_url:  "{{ lookup('env', 'OS_AUTH_URL') }}"
+    os_username:  "{{ lookup('env', 'OS_USERNAME') }}"
+    os_password:  "{{ lookup('env', 'OS_PASSWORD') }}"
+    os_proj_name: "{{ lookup('env', 'OS_PROJ_NAME') }}"
+    os_vm_name:   "{{ lookup('env', 'OS_VM_NAME') |  default('openstack-ansible-test', true) }}"
+    os_vm_ram:    "{{ lookup('env', 'OS_VM_RAM') |  default(1024, true) }}"
+    os_vm_image:  "{{ lookup('env', 'OS_VM_IMAGE') |  default('cirros', true) }}"
+  tasks:
+    # http://docs.ansible.com/ansible/os_server_module.html
+    - name: launch an instance
+      os_server:
+        state: present
+        auth:
+          auth_url: "{{ os_auth_url }}"
+          username: "{{ os_username }}"
+          password: "{{ os_password }}"
+          project_name: "{{ os_proj_name }}"
+        name: "{{ os_vm_name }}"
+        flavor_ram: "{{ os_vm_ram }}"
+        image: "{{ os_vm_image }}"
+
