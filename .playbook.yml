@@ -1,18 +1,42 @@
 # Create a compute instance on OpenStack using Ansbile
 ---
-- name: launch a compute instance test
+- name: Launch an OpenStack compute instance
   hosts: localhost
-  vars: 
-    os_auth_url:  "{{ lookup('env', 'OS_AUTH_URL') }}"
-    os_username:  "{{ lookup('env', 'OS_USERNAME') }}"
-    os_password:  "{{ lookup('env', 'OS_PASSWORD') }}"
-    os_proj_name: "{{ lookup('env', 'OS_PROJ_NAME') }}"
-    os_vm_name:   "{{ lookup('env', 'OS_VM_NAME') |  default('openstack-ansible-test', true) }}"
-    os_vm_ram:    "{{ lookup('env', 'OS_VM_RAM') |  default(1024, true) }}"
-    os_vm_image:  "{{ lookup('env', 'OS_VM_IMAGE') |  default('cirros', true) }}"
+  vars_files:
+    - vars/main.yml
+
   tasks:
+
+    # Create key file with 0600 permissions
+    # http://docs.ansible.com/ansible/copy_module.html
+    - name: Add private key
+      copy:
+        content: "{{ id_rsa_base64| b64decode }}"
+        dest: "{{ user_home }}/{{ rsa_filename }}"
+        mode: 0600
+
+    # Generate a public key from the private key
+    # http://docs.ansible.com/ansible/shell_module.html
+    - name: Generate public key
+      shell: "ssh-keygen -P '' -y -f {{ user_home }}/{{ rsa_filename }} > {{ user_home }}/{{ rsa_filename }}.pub"
+
+    # Add the public key to OpenStack
+    # http://docs.ansible.com/ansible/os_keypair_module.html
+    - name: Add keypair
+      os_keypair:
+        state: present
+        name: "{{ os_key_name }}"
+        public_key_file: "{{ user_home }}/{{ rsa_filename }}.pub"
+        auth:
+          auth_url: "{{ os_auth_url }}"
+          username: "{{ os_username }}"
+          password: "{{ os_password }}"
+          project_name: "{{ os_proj_name }}"
+      register: "create_key"
+
+    # Launch an OpenStack compute instance
     # http://docs.ansible.com/ansible/os_server_module.html
-    - name: launch an instance
+    - name: Launch the compute instance
       os_server:
         state: present
         auth:
@@ -23,4 +47,113 @@
         name: "{{ os_vm_name }}"
         flavor_ram: "{{ os_vm_ram }}"
         image: "{{ os_vm_image }}"
+        key_name: "{{ os_key_name }}"
+      register: "create_server"
 
+    # Add system to host_group
+    # http://docs.ansible.com/ansible/add_host_module.html
+    - name: Add system as host
+      add_host:
+        name: "{{ create_server.openstack.public_v4 }}:{{ ssh_port }}"
+        groups: "{{ host_group }}"
+        ansible_ssh_private_key_file: "{{ user_home }}/{{ rsa_filename }}"
+
+    # Wait for port to be opened
+    # http://docs.ansible.com/ansible/wait_for_module.html
+    - name: Wait for SSH to be active
+      local_action: wait_for port="{{ ssh_port }}" host="{{ create_server.openstack.public_v4 }}" search_regex=OpenSSH
+
+# --------------------------------------------------------------------------------
+# Install Node.JS on the created instance
+- name: Configure instance to run a Node.JS app
+  hosts: new_hosts #must match groupname in "add_host" above
+  user: ubuntu
+  vars:
+    app_folder: "bluemix-node-sample"
+  tasks:
+
+    # Update apt list
+    # http://docs.ansible.com/ansible/apt_module.html
+    - name: Update apt list
+      apt:
+        update_cache: yes
+      become: true
+
+    # Install APT packages
+    - name: Install packages
+      apt:
+        name: "{{ item }}"
+      become: true
+      with_items:
+        - git
+        - build-essential
+        - python-dev
+        - python-pip
+
+    # Install PIP packages
+    # http://docs.ansible.com/ansible/pip_module.html
+    - name: pip install
+      pip:
+        name: "{{ item }}"
+      become: true
+      with_items:
+        - urllib3
+        - pyopenssl
+        - ndg-httpsclient
+        - pyasn1
+
+    # Add key for Node.JS
+    # http://docs.ansible.com/ansible/apt_key_module.html
+    - name: Add apt key for nodesource
+      apt_key: url=https://deb.nodesource.com/gpgkey/nodesource.gpg.key
+      become: true
+
+    # Add the Node.JS repo
+    # http://docs.ansible.com/ansible/apt_repository_module.html
+    - name: add repo for nodesource
+      apt_repository:
+        repo: 'deb https://deb.nodesource.com/node_6.x {{ ansible_distribution_release }} main'
+        update_cache: true
+      become: true
+
+    # Instal Node.JS
+    - name: Install packages
+      apt:
+        name: nodejs
+      become: true
+      register: output
+
+    # Clone the Node.JS project
+    # http://docs.ansible.com/ansible/git_module.html
+    - name: clone repo
+      git:
+        repo: https://github.com/IBMCloudDevOps/bluemix-node-sample
+        accept_hostkey: yes
+        force: yes
+        dest: "{{ ansible_env.HOME }}/{{ app_folder }}"
+
+    # Install npm packages
+    # http://docs.ansible.com/ansible/command_module.html
+    - name: npm install
+      command: "npm install"
+      args:
+        chdir: "{{ ansible_env.HOME }}/{{ app_folder }}"
+
+    # Run node server as cronjob
+    # http://docs.ansible.com/ansible/cron_module.html
+    - name: Start server on boot
+      cron:
+        name: "Run node app"
+        special_time: reboot
+        job: "/usr/bin/nodejs  {{ ansible_env.HOME }}/{{ app_folder }}/app.js"
+
+    # Reboot the server
+    - name: Restart server
+      command: /sbin/shutdown -r now
+      async: 0
+      poll: 0
+      ignore_errors: true
+      become: true
+
+    - name: Print app URL
+      debug: msg="Node app available at http://{{ inventory_hostname }}:3000"
