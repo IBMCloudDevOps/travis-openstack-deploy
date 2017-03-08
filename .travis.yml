@@ -2,15 +2,20 @@ language: python
 python:
   - "2.7"
 
+# Set ENV vars
 env:
+  # Allows SSH connection without user input
   - ANSIBLE_HOST_KEY_CHECKING=False
 
+# Run a script
 script:
   - echo "Run test scripts here"
 
+# Install required packages
 before_deploy:
   - pip install ansible shade
 
+# Run the playbook on merges to master
 deploy:
   - provider: script
     script: "ansible-playbook .playbook.yml"
