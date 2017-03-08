@@ -54,7 +54,9 @@
     # http://docs.ansible.com/ansible/add_host_module.html
     - name: Add system as host
       add_host:
-        name: "{{ create_server.openstack.public_v4 }}:{{ ssh_port }}"
+        hostname: "OpenStack Instance ({{ os_vm_image }})"
+        ansible_host: "{{ create_server.openstack.public_v4 }}"
+        ansible_port: "{{ ssh_port }}"
         groups: "{{ host_group }}"
         ansible_ssh_private_key_file: "{{ user_home }}/{{ rsa_filename }}"
 
@@ -156,4 +158,4 @@
       become: true
 
     - name: Print app URL
-      debug: msg="Node app available at http://{{ inventory_hostname }}:3000"
+      debug: msg="Node app available at http://{{ ansible_host }}:3000"
